@@ -67,7 +67,7 @@ def parse_args():
                         choices=list(range(40)),
                         default=0)
 
-    parser.add_argument('--target-train-samples',
+    parser.add_argument('--auxiliary-train-samples',
                         help='num of train samples for the target task',
                         type=int,
                         default=100)
@@ -220,39 +220,24 @@ def read_data(train_data_dir, test_data_dir):
     return train_clients, train_data, test_data
 
 
-def fed_average(clients_gradients):
-    total_weight = 0
-    # (client_samples_num, new_params) = updates[0][0], updates[0][1]
-    #
-    for item in clients_gradients:
-        (client_samples_num, _) = item[0], item[1]
-        total_weight += client_samples_num
-    #
-    # for k in new_params.keys():
-    #     for i in range(0, len(updates)):
-    #         client_samples, client_params = updates[i][0], updates[i][1]
-    #         # weight
-    #         w = client_samples / total_weight
-    #         if i == 0:
-    #             new_params[k] = client_params[k] * w
-    #         else:
-    #             new_params[k] += client_params[k] * w
-    # # return global model params
-    # return new_params
+def fed_average(num_samples_models):
+    client_samples = [item[0] for item in num_samples_models]
+    client_models = [item[1] for item in num_samples_models]
+    total_samples = sum(client_samples)
+    client_weights = [item / total_samples for item in client_samples]
+    averaged_model = deepcopy(client_models[0])
 
-    # here, we use the uniform weight
-    agg_g = deepcopy(clients_gradients[0][1])
-    for name, p in agg_g.named_parameters():
-        p.data = torch.zeros_like(p).cuda()
-
-    for name, p in agg_g.named_parameters():
-        for i in range(0, len(clients_gradients)):
-            c_g = clients_gradients[i][1]
-            # weight
-            w = clients_gradients[i][0] / total_weight
-            p.data += c_g.state_dict()[name] * w
-    # return aggregated gradient
-    return agg_g
+    for key in averaged_model.state_dict().keys():
+        # num_batches_tracked is a non-trainable LongTensor and
+        # num_batches_tracked are the same for all clients for the given datasets
+        if 'num_batches_tracked' in key:
+            averaged_model.state_dict()[key].data.copy_(client_models[0].state_dict()[key])
+        else:
+            tmp = torch.zeros_like(averaged_model.state_dict()[key])
+            for client_idx in range(len(client_weights)):
+                tmp += client_weights[client_idx] * client_models[client_idx].state_dict()[key]
+            averaged_model.state_dict()[key].data.copy_(tmp)
+    return averaged_model
 
 
 def avg_metric(metric_list):
@@ -290,7 +275,15 @@ def get_exp_dir_name():
 def get_pseudo_gradient(old_model, new_model, config):  # old_model and new_model: type Model not ParallelModel
     with torch.no_grad():
         pseudo_gradient = deepcopy(old_model)
-        for name, p in pseudo_gradient.named_parameters():
+        # for name, p in pseudo_gradient.named_parameters():
+        #     delta_p = old_model.state_dict()[name] - new_model.state_dict()[name]
+        #
+        #     noise = config.noise_sigma * torch.randn(size=delta_p.shape).cuda()
+        #     delta_p = delta_p + noise
+        #
+        #     p.data = delta_p
+
+        for name, p in pseudo_gradient.state_dict().items():
             delta_p = old_model.state_dict()[name] - new_model.state_dict()[name]
 
             noise = config.noise_sigma * torch.randn(size=delta_p.shape).cuda()

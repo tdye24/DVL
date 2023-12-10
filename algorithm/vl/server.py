@@ -21,19 +21,20 @@ class SERVER:
         self.test_loader = None
         self.auxiliary_train_loader = None
         self.iter_auxiliary_train_loader = None
-        self.auxiliary_valid_loader = None
         self.config = config
         self.clients = self.setup_clients()
         self.selected_clients = []
-        self.clients_gradients = []
+        self.num_samples_models = []
         # affect server initialization
         setup_seed(config.seed)
         self.model = select_model(config=self.config)
+        self.target_head = nn.Linear(self.model.fc.in_features, 2)
         if torch.cuda.is_available():
             self.model.cuda()
+            self.target_head.cuda()
 
     def setup_clients(self):
-        train_loaders, test_loader = setup_datasets(config=self.config)
+        train_loaders, test_loader, auxiliary_train_loader = setup_datasets(config=self.config)
         users = [i for i in range(len(train_loaders))]
         clients = [
             CLIENT(user_id=user_id,
@@ -41,34 +42,29 @@ class SERVER:
                    config=self.config)
             for user_id in users]
         self.test_loader = test_loader
+        self.auxiliary_train_loader = auxiliary_train_loader
         return clients
 
     def select_clients(self, round_th):
         np.random.seed(seed=self.config.seed + round_th)
-        if self.config.attacker_userid == -1:
-            return np.random.choice(self.clients, min(self.config.clients_per_round, len(self.clients)), replace=False)
-        else:
-            # the attacker actively participate in each round
-            benign_clients = [c for c in self.clients if c.user_id != self.config.attacker_userid]
-            selected_benign_clients = np.random.choice(benign_clients, min(self.config.clients_per_round, len(self.clients))-1, replace=False)
-            return np.hstack((self.clients[self.config.attacker_userid], selected_benign_clients))
+        return np.random.choice(self.clients, min(self.config.clients_per_round, len(self.clients)), replace=False)
 
     def federate(self):
         print(f"Training with {len(self.clients)} clients!")
-        exp_log_dir = os.path.join('./logs/',
-                                   f'main_{self.config.main_PID}_target_{self.config.target_PID}_{self.config.exp_note}')
-
-        if not os.path.exists(exp_log_dir):
-            os.mkdir(exp_log_dir)
+        # exp_log_dir = os.path.join('./logs/',
+        #                            f'main_{self.config.main_PID}_target_{self.config.target_PID}_{self.config.exp_note}')
+        #
+        # if not os.path.exists(exp_log_dir):
+        #     os.mkdir(exp_log_dir)
 
         for c in self.clients:
             print(c.user_id, "Train", c.train_samples_num)
         for i in tqdm(range(self.config.num_rounds)):
             start_time = time.time()
-
-            # if self.config.active:
-            #     self.active_PC_MTL(r=i)
-
+            target_training_acc = 0
+            if self.config.active:
+                print("Active stealing.")
+                target_training_acc = self.active_PC_MTL(r=i)
             self.selected_clients = self.select_clients(round_th=i)
 
             training_acc = 0
@@ -78,8 +74,8 @@ class SERVER:
             for k in range(len(self.selected_clients)):
                 c = self.selected_clients[k]
                 c.init_local_model(deepcopy(self.model))
-                train_samples_num, c_g, c_train_acc, c_train_loss = c.train(r=i)
-                self.clients_gradients.append((train_samples_num, c_g))
+                train_samples_num, c_model, c_train_acc, c_train_loss = c.train(r=i)
+                self.num_samples_models.append((train_samples_num, c_model))
 
                 training_acc += c_train_acc * train_samples_num
                 training_loss += c_train_loss * train_samples_num
@@ -88,43 +84,61 @@ class SERVER:
             training_acc /= total_samples
             training_loss /= total_samples
 
-            aggregated_g = fed_average(self.clients_gradients)
-            self.update_global_model(agg_g=aggregated_g)
+            averaged_model = fed_average(self.num_samples_models)
+            self.model.load_state_dict(averaged_model.state_dict())
             end_time = time.time()
 
             print(f"training costs {end_time - start_time}(s)")
 
             if i == 0 or (i + 1) % self.config.eval_interval == 0:
-                if self.config.save_models:
-                    torch.save(self.model, os.path.join(exp_log_dir, f'{i}-model.pt'))
                 test_acc, test_loss = self.test(model=self.model, data_loader=self.test_loader)
+                tuned_model = self.finetune(model=deepcopy(self.model),
+                                                               target_head=deepcopy(self.target_head))
+                target_test_acc, target_test_loss = self.test(model=tuned_model,
+                                                              data_loader=self.test_loader,
+                                                              task='target')
                 summary = {
                     "round": i,
                     "TrainAcc": training_acc,
                     "TrainLoss": training_loss,
                     "TestAcc": test_acc,
-                    "TestLoss": test_loss
+                    "TestLoss": test_loss,
+                    "TargetTrainAcc": target_training_acc,
+                    "TargetTestAcc": target_test_acc
                 }
-                # if self.config.attacker_userid != -1:
-                #     attacker = self.clients[self.config.attacker_userid]
-                    # target_test_acc, target_test_loss = self.test(model=attacker.model,
-                    #                                               target_head=attacker.target_head,
-                    #                                               data_loader=self.test_loader)
-                    # target_test_acc, target_test_loss = self.test(model=self.model,
-                    #                                               target_head=attacker.target_head,
-                    #                                               data_loader=self.test_loader)
-                    # summary.update({
-                    #     "TargetTestAcc": target_test_acc,
-                    #     "TargetTestLoss": target_test_loss
-                    # })
                 if self.config.use_wandb:
                     wandb.log(summary)
                 else:
                     print(summary)
 
-            self.clients_gradients = []
-            del aggregated_g
+            self.num_samples_models = []
+            del averaged_model
             torch.cuda.empty_cache()
+
+    def finetune(self, model, target_head):
+        lr = 0.001
+        wd = 1e-4
+        momentum = 0.9
+        finetune_epochs = 20
+        model.fc = target_head
+        model.cuda()
+        loss_fn = nn.CrossEntropyLoss()
+        optimizer = optim.SGD(params=model.parameters(),
+                              lr=lr,
+                              weight_decay=wd,
+                              momentum=momentum)
+        for _ in range(finetune_epochs):
+            model.train()
+            for step, (x, multi_labels) in enumerate(self.auxiliary_train_loader):
+                if torch.cuda.is_available():
+                    x, multi_labels = x.cuda(), multi_labels.cuda()
+                logits = model(x)
+                target_labels = multi_labels[:, 1]  # target task label
+                loss = loss_fn(logits, target_labels)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+        return model
 
     def get_next_batch(self):
         if not self.iter_auxiliary_train_loader:
@@ -136,48 +150,45 @@ class SERVER:
             (X, y) = next(self.iter_auxiliary_train_loader)
         return X, y
 
-    # def active_PC_MTL(self, r):
-    #     model = self.model
-    #     body = torch.nn.Sequential(*list(model.children())[:-1])
-    #     target_head = self.target_head  # finetuning induces fl training to leak more information about target task
-    #     # todo each time, reinitialize the target head to enhance representation learning, prevent from over-fitting
-    #     attack_lr = self.config.attack_lr * (self.config.attack_lr_decay ** r)
-    #     loss_fn = nn.CrossEntropyLoss()
-    #     optimizer = optim.SGD(
-    #         [{'params': body.parameters()},
-    #          {'params': target_head.parameters()}],
-    #         lr=attack_lr,
-    #         weight_decay=1e-4,
-    #         momentum=0.9
-    #     )
-    #     body.train()
-    #     target_head.train()
-    #     for epoch in range(self.config.attack_iterations):
-    #         x, multi_labels = self.get_next_batch()
-    #         y = multi_labels[:, 1] # target task label
-    #         if torch.cuda.is_available():
-    #             x, y = x.cuda(), y.cuda()
-    #         embedding = body(x).view(x.shape[0], -1)
-    #         logits = target_head(embedding)
-    #         loss = loss_fn(logits, y)
-    #         optimizer.zero_grad()
-    #         loss.backward()
-    #         optimizer.step()
-    #     torch.cuda.empty_cache()
-
+    def active_PC_MTL(self, r):
+        model = self.model
+        body = torch.nn.Sequential(*list(model.children())[:-1])
+        target_head = self.target_head  # finetuning induces fl training to leak more information about target task
+        # todo each time, reinitialize the target head to enhance representation learning, prevent from over-fitting
+        attack_lr = self.config.attack_lr * (self.config.attack_lr_decay ** r)
+        loss_fn = nn.CrossEntropyLoss()
+        optimizer = optim.SGD(
+            [{'params': body.parameters()},
+             {'params': target_head.parameters()}],
+            lr=attack_lr,
+            weight_decay=1e-4,
+            momentum=0.9
+        )
+        body.train()
+        target_head.train()
+        running_true = 0
+        running_total = 0
+        for epoch in range(self.config.attack_iterations):
+            x, multi_labels = self.get_next_batch()
+            y = multi_labels[:, 1] # target task label
+            if torch.cuda.is_available():
+                x, y = x.cuda(), y.cuda()
+            embedding = body(x).view(x.shape[0], -1)
+            logits = target_head(embedding)
+            preds = torch.argmax(logits, dim=-1)
+            running_true += torch.sum(preds == y).item()
+            running_total += len(y)
+            loss = loss_fn(logits, y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        torch.cuda.empty_cache()
+        return running_true / running_total * 100
     @staticmethod
-    def test(model=None, target_head=None, data_loader=None):
-        if target_head is None:
-            # main task test
-            model.cuda()
-            model.eval()
-        else:
-            # target task test
-            body = torch.nn.Sequential(*list(model.children())[:-1])
-            body.cuda()
-            body.eval()
-            target_head.cuda()
-            target_head.eval()
+    def test(model=None, data_loader=None, task='main'):
+        # main task test
+        model.cuda()
+        model.eval()
 
         total_right = 0
         total_samples = 0
@@ -188,13 +199,11 @@ class SERVER:
             for step, (x, multi_labels) in enumerate(data_loader):
                 if torch.cuda.is_available():
                     x, multi_labels = x.cuda(), multi_labels.cuda()
-                if target_head is None:
-                    logits = model(x)
+                if task == 'main':
                     y = multi_labels[:, 0] # main task label
                 else:
-                    features = body(x).view(x.shape[0], -1)
-                    logits = target_head(features)
                     y = multi_labels[:, 1] # target task label
+                logits = model(x)
                 loss = loss_fn(logits, y)
                 total_loss += loss.item()
                 total_iters += 1
@@ -209,5 +218,7 @@ class SERVER:
         return acc, average_loss
 
     def update_global_model(self, agg_g):
-        for (_, param), (_, param_g) in zip(self.model.named_parameters(), agg_g.named_parameters()):
+        # for (_, param), (_, param_g) in zip(self.model.named_parameters(), agg_g.named_parameters()):
+        #     param.data = param.data - param_g.data
+        for (_, param), (_, param_g) in zip(self.model.state_dict().items(), agg_g.state_dict().items()):
             param.data = param.data - param_g.data

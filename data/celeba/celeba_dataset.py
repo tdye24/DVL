@@ -72,7 +72,7 @@ def construct_prop_nonprop_img_names():
             json.dump(obj=prop_nonprop_img_names, fp=f)
     return prop_nonprop_img_names
 
-def prepare_dataloaders(main_PID, target_PID, num_users=40, batch_size=16):
+def prepare_dataloaders(main_PID, target_PID, num_users=4, batch_size=16, auxiliary_train_samples=100):
     res = construct_prop_nonprop_img_names()
     main_prop = res[str(main_PID)]['prop']
     main_nonprop = res[str(main_PID)]['nonprop']
@@ -104,9 +104,19 @@ def prepare_dataloaders(main_PID, target_PID, num_users=40, batch_size=16):
     for img_name in NN:
         img_name_2_label_dic[img_name] = 0
 
-    combined_img_names = np.hstack((PP, PN, NP, NN))
-    assert len(combined_img_names) >= 5000 # 4000 train + 1000 test, 4 clients and 1000 per client
-    train_test_img_names = np.random.choice(combined_img_names, 5000)
+    auxiliary_train_img_names = np.hstack((
+        np.random.choice(PP, auxiliary_train_samples // 4, replace=False),
+        np.random.choice(PN, auxiliary_train_samples // 4, replace=False),
+        np.random.choice(NP, auxiliary_train_samples // 4, replace=False),
+        np.random.choice(NN, auxiliary_train_samples // 4, replace=False)
+    ))
+    auxiliary_train_d = CelebA_DATASET(image_names=auxiliary_train_img_names,
+                            attr_transform=lambda x: torch.tensor([x[main_PID], x[target_PID]]).long())
+    auxiliary_train_loader = DataLoader(dataset=auxiliary_train_d, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
+
+    train_test_img_names = list(set(np.hstack((PP, PN, NP, NN))) - set(auxiliary_train_img_names))
+    assert len(train_test_img_names) >= 5000 # 4000 train + 1000 test, 4 clients and 1000 per client
+    train_test_img_names = np.random.choice(train_test_img_names, 5000)
     train_test_labels = [img_name_2_label_dic[img_name] for img_name in train_test_img_names]
     train_img_names, test_img_names, _, _ = train_test_split(train_test_img_names,
                                                              train_test_labels,
@@ -120,7 +130,7 @@ def prepare_dataloaders(main_PID, target_PID, num_users=40, batch_size=16):
     for user_id in range(num_users):
         c_img_names = train_img_names[user_id * num_samples_per_client: (user_id+1) * num_samples_per_client]
         c_train_d = CelebA_DATASET(image_names=c_img_names,
-                                 attr_transform=lambda x: torch.tensor([x[main_PID], x[target_PID]]).long())
+                                 attr_transform=lambda x: torch.tensor(x[main_PID]).long())
         c_train_loader = DataLoader(dataset=c_train_d, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
         train_loaders.append(c_train_loader)
 
@@ -128,11 +138,11 @@ def prepare_dataloaders(main_PID, target_PID, num_users=40, batch_size=16):
                             attr_transform=lambda x: torch.tensor([x[main_PID], x[target_PID]]).long())
     test_loader = DataLoader(dataset=test_d, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
 
-    return train_loaders, test_loader
+    return train_loaders, test_loader, auxiliary_train_loader
 
 
 # if __name__ == '__main__':
-    # train_loaders, test_loader, auxiliary_train_loader, auxiliary_valid_loader = img_names = prepare_dataloaders(main_PID=35, target_PID=15)
+#     train_loaders, test_loader, auxiliary_train_loader = prepare_dataloaders(main_PID=35, target_PID=15)
     # res = construct_prop_nonprop_img_names()
     # get_auxiliary_dataloader(num_samples=10000)
     # get_celeba_combined_dataloader()

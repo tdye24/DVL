@@ -1,7 +1,4 @@
 import os
-
-import numpy as np
-
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch.nn as nn
 import torch.optim as optim
@@ -159,14 +156,13 @@ if args.path is None:
     print("mean", "{:.2f}".format(np.mean(res)), "std", "{:.2f}".format(np.std(res, ddof=1)))
     if args.use_wandb:
         wandb.log({
-            'mean': np.mean(res),
-            'std': np.std(res, ddof=1)
+            ''
         })
 else:
     path = os.path.join('./logs', args.path)
     if os.path.isdir(path):
         model_names = [item for item in os.listdir(path) if 'model' in item]
-        rounds = sorted([int(item.split('-')[0]) for item in model_names], reverse=True)
+        rounds = sorted([int(item.split('-')[0]) for item in model_names])
         for r in rounds:
             model_path = os.path.join(path, f"{r}-model.pt")
             target_head_path = os.path.join(path, f"{r}-target-head.pt")

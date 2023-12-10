@@ -10,14 +10,15 @@ from utils.utils import setup_seed
 
 def setup_datasets(config):
     setup_seed(42)
-    train_loaders, test_loader = None, None
+    train_loaders, test_loader, auxiliary_train_loader = None, None, None
     # main task
     if config.main_task == 'PC':
         print(f"Main task: property classification, property: {PID_2_NAME[config.main_PID]}({config.main_PID+1})")
-        train_loaders, test_loader = prepare_dataloaders(main_PID=config.main_PID,
-                                                         target_PID=config.target_PID,
-                                                         num_users=config.num_users,
-                                                         batch_size=config.batch_size)
+        train_loaders, test_loader, auxiliary_train_loader = prepare_dataloaders(main_PID=config.main_PID,
+                                                                                 target_PID=config.target_PID,
+                                                                                 num_users=config.num_users,
+                                                                                 batch_size=config.batch_size,
+                                                                                 auxiliary_train_samples=config.auxiliary_train_samples)
     else:
         assert config.main_task == 'IC'
         # print(f"Main task: identity classification, num identity: {config.main_num_identity}")
@@ -29,7 +30,7 @@ def setup_datasets(config):
     #     users, train_loaders, test_loaders = get_cifar10_data_loaders(batch_size=batch_size,
     #                                                                 transform=celeba_transform)
     # target task
-    return train_loaders, test_loader
+    return train_loaders, test_loader, auxiliary_train_loader
 
 
 def select_model(config):
