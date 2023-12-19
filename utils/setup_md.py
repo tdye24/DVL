@@ -1,7 +1,7 @@
 # datasets
 from data.celeba.celeba_dataset import prepare_dataloaders
 # models
-from models.celeba.leaf import Model as Leaf
+from models.celeba.leaf import Leaf
 from models.celeba.resent18 import get_resnet18
 # transforms
 from utils.constants import *
@@ -37,7 +37,12 @@ def select_model(config):
     model_name = config.model
     model = None
     if model_name == 'leaf':
-        model = Leaf(num_classes=config.num_classes)
+        if config.main_task == 'PC':
+            model = Leaf(num_classes=2, z_dim=config.z_dim, probabilistic=config.probabilistic, num_samples=config.num_samples)
+        else:
+            assert config.main_task == 'IC'
+            model = Leaf(num_classes=config.main_num_entity)
+
     elif model_name == 'resnet18':
         if config.main_task == 'PC':
             model = get_resnet18(pretrained=not config.no_pretrained, num_classes=2)

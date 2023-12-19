@@ -1,6 +1,5 @@
 from utils.utils import *
 from algorithm.vl.server import SERVER as VL_SERVER
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 if __name__ == '__main__':
     args = parse_args()
@@ -14,7 +13,7 @@ if __name__ == '__main__':
         config.update(args)
     else:
         config = args
-
+    os.environ["CUDA_VISIBLE_DEVICES"] = f"{config.cuda_no}"
     server = None
     if config.algorithm == 'vl':
         server = VL_SERVER(config=config)

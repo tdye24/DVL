@@ -28,7 +28,7 @@ class SERVER:
         # affect server initialization
         setup_seed(config.seed)
         self.model = select_model(config=self.config)
-        self.target_head = nn.Linear(self.model.fc.in_features, 2)
+        self.target_head = nn.Linear(self.model.decoder.in_features, 2)
         if torch.cuda.is_available():
             self.model.cuda()
             self.target_head.cuda()
@@ -51,14 +51,20 @@ class SERVER:
 
     def federate(self):
         print(f"Training with {len(self.clients)} clients!")
-        # exp_log_dir = os.path.join('./logs/',
-        #                            f'main_{self.config.main_PID}_target_{self.config.target_PID}_{self.config.exp_note}')
-        #
-        # if not os.path.exists(exp_log_dir):
-        #     os.mkdir(exp_log_dir)
+        exp_log_dir = os.path.join('./logs/',
+                                   f'main_{self.config.main_PID}_target_{self.config.target_PID}_{self.config.exp_note}')
+
+        if not os.path.exists(exp_log_dir):
+            os.mkdir(exp_log_dir)
 
         for c in self.clients:
             print(c.user_id, "Train", c.train_samples_num)
+
+        # save the randomly initialized model
+        torch.save(self.model, os.path.join(exp_log_dir, f'0-model.pt'))
+        if self.config.active:
+            torch.save(self.target_head, os.path.join(exp_log_dir, f'0-target-head.pt'))
+
         for i in tqdm(range(self.config.num_rounds)):
             start_time = time.time()
             target_training_acc = 0
@@ -90,22 +96,18 @@ class SERVER:
 
             print(f"training costs {end_time - start_time}(s)")
 
-            if i == 0 or (i + 1) % self.config.eval_interval == 0:
+            if (i + 1) % self.config.eval_interval == 0:
                 test_acc, test_loss = self.test(model=self.model, data_loader=self.test_loader)
-                tuned_model = self.finetune(model=deepcopy(self.model),
-                                                               target_head=deepcopy(self.target_head))
-                target_test_acc, target_test_loss = self.test(model=tuned_model,
-                                                              data_loader=self.test_loader,
-                                                              task='target')
                 summary = {
                     "round": i,
                     "TrainAcc": training_acc,
                     "TrainLoss": training_loss,
                     "TestAcc": test_acc,
                     "TestLoss": test_loss,
-                    "TargetTrainAcc": target_training_acc,
-                    "TargetTestAcc": target_test_acc
                 }
+                torch.save(self.model, os.path.join(exp_log_dir, f'{i+1}-model.pt'))
+                if self.config.active:
+                    torch.save(self.target_head, os.path.join(exp_log_dir, f'{i+1}-target-head.pt'))
                 if self.config.use_wandb:
                     wandb.log(summary)
                 else:
@@ -152,7 +154,7 @@ class SERVER:
 
     def active_PC_MTL(self, r):
         model = self.model
-        body = torch.nn.Sequential(*list(model.children())[:-1])
+        body = model.encoder
         target_head = self.target_head  # finetuning induces fl training to leak more information about target task
         # todo each time, reinitialize the target head to enhance representation learning, prevent from over-fitting
         attack_lr = self.config.attack_lr * (self.config.attack_lr_decay ** r)
@@ -173,9 +175,12 @@ class SERVER:
             y = multi_labels[:, 1] # target task label
             if torch.cuda.is_available():
                 x, y = x.cuda(), y.cuda()
-            embedding = body(x).view(x.shape[0], -1)
-            logits = target_head(embedding)
-            preds = torch.argmax(logits, dim=-1)
+            if self.config.probabilistic:
+                z, (z_mu, z_sigma) = body(x)
+            else:
+                z = body(x)
+            logits = target_head(z)
+            preds = torch.argmax(z, dim=-1)
             running_true += torch.sum(preds == y).item()
             running_total += len(y)
             loss = loss_fn(logits, y)

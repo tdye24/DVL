@@ -8,6 +8,8 @@ from copy import deepcopy
 import datetime
 import argparse
 
+from torch import Tensor
+
 ALGORITHMS = ['fedavg', 'vl']
 DATASETS = ['celeba', 'cifar10']
 
@@ -80,8 +82,8 @@ def parse_args():
     parser.add_argument('--model',
                         help='name of model',
                         type=str,
-                        choices=['resnet18'],
-                        default='resnet18')
+                        choices=['leaf', 'resnet18'],
+                        default='leaf')
 
     parser.add_argument('--num-rounds',
                         help='# of communication round',
@@ -165,6 +167,36 @@ def parse_args():
                         help='the user id of the attacker',
                         type=int,
                         default=0) # -1 representing no attacker
+
+    parser.add_argument('--MinICD',
+                        help='minimize intra-class distance',
+                        type=int,
+                        default=0)
+
+    parser.add_argument('--MinICD-alpha',
+                        help='alpha for minimizing intra-class distance',
+                        type=float,
+                        default=0.01)
+
+    parser.add_argument('--beta',
+                        help='beta, info loss',
+                        type=float,
+                        default=0.001)
+
+    parser.add_argument('--probabilistic',
+                        help='probabilistic, ture (1) or false (0)',
+                        type=int,
+                        default=1)
+
+    parser.add_argument('--z-dim',
+                        help='z-dim',
+                        type=int,
+                        default=512)
+
+    parser.add_argument('--num-samples',
+                        help='num sampled samples during testing',
+                        type=int,
+                        default=20)
 
     return parser.parse_args()
 
@@ -306,3 +338,24 @@ def convert_to_image(obj, mean=0.5, std=0.5): # single image
     obj = Image.fromarray(np.uint8(obj))
     obj.save('./converted_image.png')
     return obj
+
+def calculate_intra_class_distance(embeddings, y):
+    # 初始化一个字典来存储不同类别的特征
+    class_embeddings = {}
+
+    # 将特征按类别进行分组
+    for idx, label in enumerate(y):
+        label = label.item()
+        if label not in class_embeddings:
+            class_embeddings[label] = [embeddings[idx]]
+        else:
+            class_embeddings[label].append(embeddings[idx])
+    ICD_list = []
+    # 计算每个类别的类内距离
+    for label, emb in class_embeddings.items():
+        emb = torch.stack(emb)  # 将特征堆叠成一个张量
+        intra_class_distance = torch.cdist(emb, emb)  # 计算类内距离
+        mean_distance = torch.mean(intra_class_distance)  # 计算平均类内距离
+        ICD_list.append(mean_distance)
+        # print(f"Label {label}: Mean intra-class distance = {mean_distance.item()}")
+    return sum(ICD_list) / len(ICD_list)

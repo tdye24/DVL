@@ -4,8 +4,10 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
+import math
 from copy import deepcopy
 from utils.utils import adjust_learning_rate_classifier, get_pseudo_gradient
+from utils.utils import calculate_intra_class_distance
 
 
 class CLIENT:
@@ -49,15 +51,25 @@ class CLIENT:
             x, y = self.get_next_batch()
             if torch.cuda.is_available():
                 x, y = x.cuda(), y.cuda()
-            logits = model(x)
+            if self.config.probabilistic:
+                logits, (z_mu, z_sigma) = model(x)
+            else:
+                logits = model(x)
             preds = torch.argmax(logits, dim=-1)
             running_true += torch.sum(preds == y).item()
             running_total += len(y)
-            loss = self.loss_ce(logits, y)
-            running_loss += loss.item()
+
+            class_loss = self.loss_ce(logits, y).div(math.log(2))
+            if self.config.probabilistic:
+                info_loss = -0.5 * (1 + 2 * z_sigma.log() - z_mu.pow(2) - z_sigma.pow(2)).sum(1).mean().div(math.log(2))
+                total_loss = class_loss + self.config.beta * info_loss
+            else:
+                total_loss = class_loss
+
+            running_loss += total_loss.item()
             running_iters += 1
             optimizer.zero_grad()
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
 
         model.cpu()
