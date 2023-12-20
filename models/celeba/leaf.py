@@ -35,12 +35,11 @@ from numbers import Number
 #         return x, x1
 
 class Leaf(nn.Module):
-    def __init__(self, image_size=84, z_dim=256, probabilistic=False, num_classes=2, num_samples=20):
+    def __init__(self, image_size=84, z_dim=256, probabilistic=False, num_classes=2):
         super(Leaf, self).__init__()
         self.z_dim = z_dim
         self.probabilistic = probabilistic
         self.num_classes = num_classes
-        self.num_samples = num_samples
         self.fc_input_size = 32 * (image_size // 16) * (image_size // 16)
         self.out_dim = 2 * self.z_dim if self.probabilistic else self.z_dim
         self.encoder = nn.Sequential(
@@ -65,7 +64,7 @@ class Leaf(nn.Module):
         )
         self.decoder = nn.Linear(z_dim, num_classes)
 
-    def featurize(self, x, num_samples=1, return_dist=False):
+    def featurize(self, x):
         if not self.probabilistic:
             return self.encoder(x)
         else:
@@ -73,11 +72,9 @@ class Leaf(nn.Module):
             z_mu = z_params[:, :self.z_dim]
             z_sigma = F.softplus(z_params[:, self.z_dim:])
             z_dist = distributions.Independent(distributions.normal.Normal(z_mu, z_sigma), 1)
-            z = z_dist.rsample([num_samples]).view([-1,self.z_dim])
-            if return_dist:
-                return z, (z_mu, z_sigma)
-            else:
-                return z
+            z = z_dist.rsample([1]).view([-1, self.z_dim])
+            return z, (z_mu, z_sigma)
+
 
     def forward(self, x):
         if not self.probabilistic:  # deterministic
@@ -85,16 +82,14 @@ class Leaf(nn.Module):
             return self.decoder(z)
         else:
             if self.training:
-                z, (z_mu, z_sigma) = self.featurize(x, return_dist=True)
+                z, (z_mu, z_sigma) = self.featurize(x)
                 return self.decoder(z), (z_mu, z_sigma)
             else:
-                z = self.featurize(x, num_samples=self.num_samples)
-                preds = torch.softmax(self.decoder(z), dim=1)
-                preds = preds.view([self.num_samples, -1, self.num_classes]).mean(0)
-                return preds
+                z, (z_mu, z_sigma) = self.featurize(x)
+                return self.decoder(z_mu)
 
 if __name__ == '__main__':
-    model = Leaf(image_size=84, probabilistic=True, num_samples=20)
+    model = Leaf(image_size=84, probabilistic=True)
     model.train()
     logits, (mu, sigma) = model(torch.randn((100, 3, 84, 84)))
     print(logits.shape, mu.shape, sigma.shape)

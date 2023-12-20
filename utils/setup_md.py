@@ -38,7 +38,7 @@ def select_model(config):
     model = None
     if model_name == 'leaf':
         if config.main_task == 'PC':
-            model = Leaf(num_classes=2, z_dim=config.z_dim, probabilistic=config.probabilistic, num_samples=config.num_samples)
+            model = Leaf(num_classes=2, z_dim=config.z_dim, probabilistic=config.probabilistic)
         else:
             assert config.main_task == 'IC'
             model = Leaf(num_classes=config.main_num_entity)

@@ -86,6 +86,10 @@ def parse_args():
                         type=int,
                         default=5)
 
+    parser.add_argument('--note',
+                        type=str,
+                        default="")
+
     return parser.parse_args()
 
 args = parse_args()
@@ -128,11 +132,12 @@ for r in range(200):
     with torch.no_grad():
         for step, (inputs, multi_labels) in tqdm(enumerate(all_train_loader)):
             inputs = inputs.cuda()
-            z = model.featurize(inputs, num_samples=model.num_samples, return_dist=False)
-            if model.probabilistic and model.num_samples > 1:
-                z = z.view([model.num_samples, -1, z.shape[-1]]).mean(0)
+            if model.probabilistic:
+                z, (z_mu, z_sigma) = model.featurize(inputs)
+            else:
+                z_mu = model.featurize(inputs)
             batch_labels = np.array(multi_labels[:, 1])
-            embeddings.append(z.cpu().detach().numpy())
+            embeddings.append(z_mu.cpu().detach().numpy())
             labels.append(batch_labels)
 
 

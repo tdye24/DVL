@@ -193,11 +193,6 @@ def parse_args():
                         type=int,
                         default=512)
 
-    parser.add_argument('--num-samples',
-                        help='num sampled samples during testing',
-                        type=int,
-                        default=20)
-
     return parser.parse_args()
 
 
