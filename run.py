@@ -6,7 +6,7 @@ if __name__ == '__main__':
     if args.use_wandb:
         import wandb
 
-        wandb.init(project="VL", entity="tdye24")
+        wandb.init(project="IJCAI_DVL", entity="tdye24")
         wandb.watch_called = False
         config = wandb.config
         args.exp_note = wandb.run.id

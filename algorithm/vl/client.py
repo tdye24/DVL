@@ -38,7 +38,7 @@ class CLIENT:
         model = self.model
         model.cuda()
         model.train()
-        current_lr = self.config.main_lr * (self.config.main_lr_decay ** r)
+        current_lr = self.config.lr * (self.config.lr_decay ** r)
         optimizer = optim.SGD(params=model.parameters(),
                               lr=current_lr,
                               weight_decay=1e-4,

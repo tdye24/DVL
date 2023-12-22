@@ -19,8 +19,6 @@ import torch.optim as optim
 class SERVER:
     def __init__(self, config):
         self.test_loader = None
-        self.auxiliary_train_loader = None
-        self.iter_auxiliary_train_loader = None
         self.config = config
         self.clients = self.setup_clients()
         self.selected_clients = []
@@ -34,7 +32,7 @@ class SERVER:
             self.target_head.cuda()
 
     def setup_clients(self):
-        train_loaders, test_loader, auxiliary_train_loader = setup_datasets(config=self.config)
+        train_loaders, test_loader = setup_datasets(config=self.config)
         users = [i for i in range(len(train_loaders))]
         clients = [
             CLIENT(user_id=user_id,
@@ -42,7 +40,6 @@ class SERVER:
                    config=self.config)
             for user_id in users]
         self.test_loader = test_loader
-        self.auxiliary_train_loader = auxiliary_train_loader
         return clients
 
     def select_clients(self, round_th):
@@ -51,8 +48,8 @@ class SERVER:
 
     def federate(self):
         print(f"Training with {len(self.clients)} clients!")
-        exp_log_dir = os.path.join('./logs/',
-                                   f'main_{self.config.main_PID}_target_{self.config.target_PID}_{self.config.exp_note}')
+        exp_log_dir = os.path.join('./fl_models/',
+                                   f'{self.config.exp_note}')
 
         if not os.path.exists(exp_log_dir):
             os.mkdir(exp_log_dir)
@@ -62,15 +59,9 @@ class SERVER:
 
         # save the randomly initialized model
         torch.save(self.model, os.path.join(exp_log_dir, f'0-model.pt'))
-        if self.config.active:
-            torch.save(self.target_head, os.path.join(exp_log_dir, f'0-target-head.pt'))
 
         for i in tqdm(range(self.config.num_rounds)):
             start_time = time.time()
-            target_training_acc = 0
-            if self.config.active:
-                print("Active stealing.")
-                target_training_acc = self.active_PC_MTL(r=i)
             self.selected_clients = self.select_clients(round_th=i)
 
             training_acc = 0
@@ -106,8 +97,6 @@ class SERVER:
                     "TestLoss": test_loss,
                 }
                 torch.save(self.model, os.path.join(exp_log_dir, f'{i+1}-model.pt'))
-                if self.config.active:
-                    torch.save(self.target_head, os.path.join(exp_log_dir, f'{i+1}-target-head.pt'))
                 if self.config.use_wandb:
                     wandb.log(summary)
                 else:
@@ -117,80 +106,8 @@ class SERVER:
             del averaged_model
             torch.cuda.empty_cache()
 
-    def finetune(self, model, target_head):
-        lr = 0.001
-        wd = 1e-4
-        momentum = 0.9
-        finetune_epochs = 20
-        model.fc = target_head
-        model.cuda()
-        loss_fn = nn.CrossEntropyLoss()
-        optimizer = optim.SGD(params=model.parameters(),
-                              lr=lr,
-                              weight_decay=wd,
-                              momentum=momentum)
-        for _ in range(finetune_epochs):
-            model.train()
-            for step, (x, multi_labels) in enumerate(self.auxiliary_train_loader):
-                if torch.cuda.is_available():
-                    x, multi_labels = x.cuda(), multi_labels.cuda()
-                logits = model(x)
-                target_labels = multi_labels[:, 1]  # target task label
-                loss = loss_fn(logits, target_labels)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-        return model
-
-    def get_next_batch(self):
-        if not self.iter_auxiliary_train_loader:
-            self.iter_auxiliary_train_loader = iter(self.auxiliary_train_loader)
-        try:
-            (X, y) = next(self.iter_auxiliary_train_loader)
-        except StopIteration:
-            self.iter_auxiliary_train_loader = iter(self.auxiliary_train_loader)
-            (X, y) = next(self.iter_auxiliary_train_loader)
-        return X, y
-
-    def active_PC_MTL(self, r):
-        model = self.model
-        body = model.encoder
-        target_head = self.target_head  # finetuning induces fl training to leak more information about target task
-        # todo each time, reinitialize the target head to enhance representation learning, prevent from over-fitting
-        attack_lr = self.config.attack_lr * (self.config.attack_lr_decay ** r)
-        loss_fn = nn.CrossEntropyLoss()
-        optimizer = optim.SGD(
-            [{'params': body.parameters()},
-             {'params': target_head.parameters()}],
-            lr=attack_lr,
-            weight_decay=1e-4,
-            momentum=0.9
-        )
-        body.train()
-        target_head.train()
-        running_true = 0
-        running_total = 0
-        for epoch in range(self.config.attack_iterations):
-            x, multi_labels = self.get_next_batch()
-            y = multi_labels[:, 1] # target task label
-            if torch.cuda.is_available():
-                x, y = x.cuda(), y.cuda()
-            if self.config.probabilistic:
-                z, (z_mu, z_sigma) = body(x)
-            else:
-                z = body(x)
-            logits = target_head(z)
-            preds = torch.argmax(z, dim=-1)
-            running_true += torch.sum(preds == y).item()
-            running_total += len(y)
-            loss = loss_fn(logits, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        torch.cuda.empty_cache()
-        return running_true / running_total * 100
     @staticmethod
-    def test(model=None, data_loader=None, task='main'):
+    def test(model=None, data_loader=None):
         # main task test
         model.cuda()
         model.eval()
@@ -204,10 +121,7 @@ class SERVER:
             for step, (x, multi_labels) in enumerate(data_loader):
                 if torch.cuda.is_available():
                     x, multi_labels = x.cuda(), multi_labels.cuda()
-                if task == 'main':
                     y = multi_labels[:, 0] # main task label
-                else:
-                    y = multi_labels[:, 1] # target task label
                 logits = model(x)
                 loss = loss_fn(logits, y)
                 total_loss += loss.item()

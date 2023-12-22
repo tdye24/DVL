@@ -40,42 +40,16 @@ def parse_args():
     parser.add_argument('--num-users',
                         help='number of users',
                         type=int,
-                        default=4)
-
-    parser.add_argument('--main-task',
-                        help='main task',
-                        choices=['PC', 'IC'], # Property Classification/Identity Classification
-                        default='PC')
+                        default=10)
 
     parser.add_argument('--main-PID',
                         help='property id of the main task',
                         type=int,
                         choices=list(range(40)),
-                        default=0)
-
-    parser.add_argument('--main-num-identity',
-                        help='number of identity for IC main task',
-                        type=int,
-                        default=500)
-
-    parser.add_argument('--target-task',
-                        help='target task',
-                        choices=['PC', 'IC'],  # Property Classification/Identity Classification
-                        default='PC')
-
-    parser.add_argument('--target-PID',
-                        help='property id of the target task',
-                        type=int,
-                        choices=list(range(40)),
-                        default=0)
+                        default=20)
 
     parser.add_argument('--auxiliary-train-samples',
                         help='num of train samples for the target task',
-                        type=int,
-                        default=100)
-
-    parser.add_argument('--target-num-identity',
-                        help='number of identity for IC target task',
                         type=int,
                         default=100)
 
@@ -88,73 +62,44 @@ def parse_args():
     parser.add_argument('--num-rounds',
                         help='# of communication round',
                         type=int,
-                        default=100)
+                        default=500)
 
-    parser.add_argument('--main-lr',
+    parser.add_argument('--lr',
                         help='clients learning rate',
                         type=float,
                         default=0.001)
 
-    parser.add_argument('--main-lr-decay',
+    parser.add_argument('--lr-decay',
                         type=float,
                         default=0.99)
-
-    parser.add_argument('--attack-lr',
-                        help='learning rate of the server during activate stealing',
-                        type=float,
-                        default=0.001)
-
-    parser.add_argument('--attack-lr-decay',
-                        type=float,
-                        default=0.99)
-
-    parser.add_argument('--attack-iterations',
-                        help='attack iterations, too big degrades the main task, too small has no effect',
-                        type=int,
-                        default=10)
 
     parser.add_argument('--eval-interval',
                         help='communication rounds between two evaluation',
                         type=int,
-                        default=1)
+                        default=5)
 
     parser.add_argument('--clients-per-round',
                         help='# of selected clients per round',
                         type=int,
-                        default=4)
+                        default=5)
 
     parser.add_argument('--local-iters',
                         help='# of iters',
                         type=int,
-                        default=1)  # sgd
+                        default=20)  # sgd
 
     parser.add_argument('--batch-size',
                         help='batch size when clients train on data',
                         type=int,
-                        default=16)
+                        default=64)
 
     parser.add_argument('--seed',
                         help='seed for random client sampling and batch splitting',
                         type=int,
                         default=42)
 
-    parser.add_argument('--alpha',
-                        help='multi-task: the coefficient before the target task',
-                        type=float,
-                        default=0.5)
-
-    parser.add_argument('--active',
-                        help='active stealing',
-                        type=int,
-                        default=1)
-
     parser.add_argument('--no-pretrained',
                         help='use the un-pretrained resnet18 as the initial model',
-                        action='store_true',
-                        default=False)
-
-    parser.add_argument('--save-models',
-                        help='save models',
                         action='store_true',
                         default=False)
 
@@ -162,21 +107,6 @@ def parse_args():
                         help='dp noise',
                         type=float,
                         default=0.0)
-
-    parser.add_argument('--attacker-userid',
-                        help='the user id of the attacker',
-                        type=int,
-                        default=0) # -1 representing no attacker
-
-    parser.add_argument('--MinICD',
-                        help='minimize intra-class distance',
-                        type=int,
-                        default=0)
-
-    parser.add_argument('--MinICD-alpha',
-                        help='alpha for minimizing intra-class distance',
-                        type=float,
-                        default=0.01)
 
     parser.add_argument('--beta',
                         help='beta, info loss',
