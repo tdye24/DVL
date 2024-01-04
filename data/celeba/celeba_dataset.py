@@ -11,7 +11,8 @@ from utils.utils import read_dir, setup_seed
 from utils.constants import *
 from tqdm import tqdm
 
-prop_ids = [20, 31, 15, 35, 39]
+# prop_ids = [20, 31, 15, 35, 39]
+prop_ids = [15, 20, 31, 39]
 
 class CelebA_DATASET(Dataset):
     def __init__(self, hdf5_path='/home/tdye/VL/data/celeba/data_with_labels.h5',
@@ -74,6 +75,71 @@ def construct_prop_nonprop_img_names():
             json.dump(obj=prop_nonprop_img_names, fp=f)
     return prop_nonprop_img_names
 
+# def construct_training_test_img_names():
+#     if os.path.exists('/home/tdye/VL/data/celeba/training_img_names.json') and \
+#             os.path.exists('/home/tdye/VL/data/celeba/test_img_names.json'):
+#         with open('/home/tdye/VL/data/celeba/training_img_names.json', 'r') as f:
+#             training_img_names = json.load(f)
+#         with open('/home/tdye/VL/data/celeba/test_img_names.json', 'r') as f:
+#             test_img_names = json.load(f)
+#     else:
+#         res = construct_prop_nonprop_img_names()
+#         training_test_img_names = set()
+#         for p_id in prop_ids:
+#             lst = res[str(p_id)]['prop']
+#             random.shuffle(lst)
+#             prop = lst[:625]
+#
+#             lst = res[str(p_id)]['nonprop']
+#             random.shuffle(lst)
+#             nonprop = lst[:625]
+#
+#             training_test_img_names.update(prop)
+#             training_test_img_names.update(nonprop)
+#
+#         training_test_img_names = list(training_test_img_names)
+#         random.shuffle(training_test_img_names)
+#         training_img_names = training_test_img_names[:4000]
+#         test_img_names = training_test_img_names[4000:]
+#         with open('/home/tdye/VL/data/celeba/training_img_names.json', 'w') as f:
+#             json.dump(obj=training_img_names, fp=f)
+#         with open('/home/tdye/VL/data/celeba/test_img_names.json', 'w') as f:
+#             json.dump(obj=test_img_names, fp=f)
+#     hdf5_path = '/home/tdye/VL/data/celeba/data_with_labels.h5'
+#     file = h5py.File(hdf5_path, 'r')
+#     print("Training statistics.")
+#     counts = {
+#         i: {
+#             'prop': 0,
+#             'nonprop': 0
+#         } for i in prop_ids
+#     }
+#     for img_name in tqdm(training_img_names):
+#         attrs = file[img_name].attrs['attributes']
+#         for index in prop_ids:
+#             if attrs[index] == 1:
+#                 counts[index]['prop'] += 1
+#             else:
+#                 counts[index]['nonprop'] += 1
+#     pprint.pprint(counts)
+#
+#     print("Test statistics.")
+#     counts = {
+#         i: {
+#             'prop': 0,
+#             'nonprop': 0
+#         } for i in prop_ids
+#     }
+#     for img_name in tqdm(test_img_names):
+#         attrs = file[img_name].attrs['attributes']
+#         for index in prop_ids:
+#             if attrs[index] == 1:
+#                 counts[index]['prop'] += 1
+#             else:
+#                 counts[index]['nonprop'] += 1
+#     pprint.pprint(counts)
+#     return training_img_names, test_img_names
+
 def construct_training_test_img_names():
     if os.path.exists('/home/tdye/VL/data/celeba/training_img_names.json') and \
             os.path.exists('/home/tdye/VL/data/celeba/test_img_names.json'):
@@ -82,24 +148,23 @@ def construct_training_test_img_names():
         with open('/home/tdye/VL/data/celeba/test_img_names.json', 'r') as f:
             test_img_names = json.load(f)
     else:
+        training_test_img_names = []
         res = construct_prop_nonprop_img_names()
-        training_test_img_names = set()
-        for p_id in prop_ids:
-            lst = res[str(p_id)]['prop']
-            random.shuffle(lst)
-            prop = lst[:2000]
+        main_p_id = prop_ids[0]
+        lst = res[str(main_p_id)]['prop']
+        random.shuffle(lst)
+        prop = lst[:2500]
 
-            lst = res[str(p_id)]['nonprop']
-            random.shuffle(lst)
-            nonprop = lst[:2000]
+        lst = res[str(main_p_id)]['nonprop']
+        random.shuffle(lst)
+        nonprop = lst[:2500]
 
-            training_test_img_names.update(prop)
-            training_test_img_names.update(nonprop)
+        training_test_img_names.extend(prop)
+        training_test_img_names.extend(nonprop)
 
-        training_test_img_names = list(training_test_img_names)
         random.shuffle(training_test_img_names)
-        training_img_names = training_test_img_names[:10000]
-        test_img_names = training_test_img_names[10000:]
+        training_img_names = training_test_img_names[:4000]
+        test_img_names = training_test_img_names[4000:]
         with open('/home/tdye/VL/data/celeba/training_img_names.json', 'w') as f:
             json.dump(obj=training_img_names, fp=f)
         with open('/home/tdye/VL/data/celeba/test_img_names.json', 'w') as f:
@@ -139,7 +204,8 @@ def construct_training_test_img_names():
     pprint.pprint(counts)
     return training_img_names, test_img_names
 
-def prepare_training_test_loaders(main_PID, num_users=10, batch_size=64):
+def prepare_training_test_loaders(num_users=4, batch_size=16):
+    # setup_seed(42)
     training_img_names, test_img_names = construct_training_test_img_names()
     train_loaders = []
     random.shuffle(training_img_names)
@@ -147,7 +213,7 @@ def prepare_training_test_loaders(main_PID, num_users=10, batch_size=64):
     for user_id in range(num_users):
         c_img_names = training_img_names[user_id * num_samples_per_client: (user_id + 1) * num_samples_per_client]
         c_train_d = CelebA_DATASET(image_names=c_img_names,
-                                   attr_transform=lambda x: torch.tensor(x[main_PID]).long())
+                                   attr_transform=lambda x: torch.tensor(x[prop_ids[0]]).long())
         c_train_loader = DataLoader(dataset=c_train_d, batch_size=batch_size, shuffle=True, num_workers=0,
                                     pin_memory=True)
         train_loaders.append(c_train_loader)
@@ -156,16 +222,14 @@ def prepare_training_test_loaders(main_PID, num_users=10, batch_size=64):
                             attr_transform=lambda x: torch.tensor([x[prop_ids[0]],
                                                                    x[prop_ids[1]],
                                                                    x[prop_ids[2]],
-                                                                   x[prop_ids[3]],
-                                                                   x[prop_ids[4]]]).long())
+                                                                   x[prop_ids[3]]]).long())
     test_loader = DataLoader(dataset=test_d, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
 
     return train_loaders, test_loader
 
 if __name__ == '__main__':
     train_loaders, test_loader = prepare_training_test_loaders(
-        main_PID=20,
-        num_users=10,
+        num_users=4,
         batch_size=16
     )
     # res = construct_prop_nonprop_img_names()

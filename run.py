@@ -3,6 +3,7 @@ from algorithm.vl.server import SERVER as VL_SERVER
 
 if __name__ == '__main__':
     args = parse_args()
+    args.num_classes = {'celeba': 2, 'cifar10': 20}[args.dataset]
     if args.use_wandb:
         import wandb
 

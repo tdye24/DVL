@@ -10,9 +10,9 @@ import argparse
 
 from torch import Tensor
 
-ALGORITHMS = ['fedavg', 'vl']
+ALGORITHMS = ['vl']
 DATASETS = ['celeba', 'cifar10']
-
+MODELS = ['leaf', 'resnet18', 'vgg11']
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -40,24 +40,19 @@ def parse_args():
     parser.add_argument('--num-users',
                         help='number of users',
                         type=int,
-                        default=10)
+                        default=4)
 
-    parser.add_argument('--main-PID',
-                        help='property id of the main task',
-                        type=int,
-                        choices=list(range(40)),
-                        default=20)
-
-    parser.add_argument('--auxiliary-train-samples',
-                        help='num of train samples for the target task',
-                        type=int,
-                        default=100)
-
-    parser.add_argument('--model',
-                        help='name of model',
+    parser.add_argument('--backbone',
+                        help='backbone',
                         type=str,
-                        choices=['leaf', 'resnet18'],
-                        default='leaf')
+                        choices=MODELS,
+                        default='vgg11')
+
+    parser.add_argument('--dataset',
+                        help='dataset',
+                        type=str,
+                        choices=DATASETS,
+                        default='celeba')
 
     parser.add_argument('--num-rounds',
                         help='# of communication round',
@@ -76,12 +71,12 @@ def parse_args():
     parser.add_argument('--eval-interval',
                         help='communication rounds between two evaluation',
                         type=int,
-                        default=5)
+                        default=2)
 
     parser.add_argument('--clients-per-round',
                         help='# of selected clients per round',
                         type=int,
-                        default=5)
+                        default=4)
 
     parser.add_argument('--local-iters',
                         help='# of iters',
@@ -91,37 +86,37 @@ def parse_args():
     parser.add_argument('--batch-size',
                         help='batch size when clients train on data',
                         type=int,
-                        default=64)
+                        default=16)
 
     parser.add_argument('--seed',
                         help='seed for random client sampling and batch splitting',
                         type=int,
                         default=42)
 
-    parser.add_argument('--no-pretrained',
-                        help='use the un-pretrained resnet18 as the initial model',
-                        action='store_true',
-                        default=False)
-
     parser.add_argument('--noise-sigma',
                         help='dp noise',
                         type=float,
                         default=0.0)
 
-    parser.add_argument('--beta',
-                        help='beta, info loss',
-                        type=float,
-                        default=0.001)
-
     parser.add_argument('--probabilistic',
-                        help='probabilistic, ture (1) or false (0)',
+                        help='probabilistic',
                         type=int,
                         default=1)
+
+    parser.add_argument('--beta',
+                        help='beta, CMI_Reg_coefficient',
+                        type=float,
+                        default=0.01)
 
     parser.add_argument('--z-dim',
                         help='z-dim',
                         type=int,
                         default=512)
+
+    parser.add_argument('--auxiliary-train-samples',
+                        help='num of train samples for the target task',
+                        type=int,
+                        default=100)
 
     return parser.parse_args()
 
@@ -196,6 +191,17 @@ def fed_average(num_samples_models):
             averaged_model.state_dict()[key].data.copy_(tmp)
     return averaged_model
 
+def fedavg_mu_or_sigma(num_samples_mu_sigma):
+    # 计算加权平均值
+    weighted_sum = torch.zeros_like(num_samples_mu_sigma[0][1])  # 初始化加权总和
+    total_weight = 0  # 初始化总权重
+
+    for num_samples, tensor in num_samples_mu_sigma:
+        weighted_sum += num_samples * tensor  # 累加加权总和
+        total_weight += num_samples  # 累加总权重
+
+    weighted_average = weighted_sum / total_weight  # 计算加权平均值
+    return weighted_average
 
 def avg_metric(metric_list):
     total_weight = 0

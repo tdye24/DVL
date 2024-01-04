@@ -4,24 +4,24 @@ import torch.nn.functional as F
 import torch.distributions as distributions
 from torchvision import models
 
-class ResNet(nn.Module):
+class Vgg(nn.Module):
     def __init__(self,
                  z_dim=256,
                  num_classes=2,
-                 version=18,
+                 version=11,
                  probabilistic=True):
-        super(ResNet, self).__init__()
+        super(Vgg, self).__init__()
         self.z_dim = z_dim
         self.num_classes = num_classes
         self.out_dim = 2 * self.z_dim
         self.probabilistic = probabilistic
-        if version == 18:
-            encoder = models.resnet18(pretrained=False)
+        if version == 11:
+            encoder = models.vgg11_bn(pretrained=False)
         else:
-            encoder = models.resnet18(pretrained=False)
+            encoder = models.vgg11_bn(pretrained=False)
 
-        num_features = encoder.fc.in_features
-        encoder.fc = nn.Linear(num_features, self.out_dim)
+        num_features = encoder.classifier[6].in_features
+        encoder.classifier[6] = nn.Linear(num_features, self.out_dim)
         self.encoder = encoder
         self.decoder = nn.Linear(z_dim, num_classes)
 
@@ -29,23 +29,17 @@ class ResNet(nn.Module):
         z_params = self.encoder(x)
         z_mu = z_params[:, :self.z_dim]
         z_sigma = F.softplus(z_params[:, self.z_dim:])
-        if self.probabilistic:
-            z_dist = distributions.Independent(distributions.normal.Normal(z_mu, z_sigma), 1)
-            z = z_dist.rsample([1]).view([-1, self.z_dim])
-            if self.training:
-                return self.decoder(z), (z_mu, z_sigma)
-            else:
-                return self.decoder(z_mu)
+        z_dist = distributions.Independent(distributions.normal.Normal(z_mu, z_sigma), 1)
+        z = z_dist.rsample([1]).view([-1, self.z_dim])
+        if self.training:
+            return self.decoder(z), (z_mu, z_sigma)
         else:
-            if self.training:
-                return self.decoder(z_mu), (z_mu, z_sigma)
-            else:
-                return self.decoder(z_mu)
+            return self.decoder(z_mu)
 
 if __name__ == '__main__':
-    model = ResNet(z_dim=256,
+    model = Vgg(z_dim=256,
                    num_classes=2,
-                   version=18)
+                   version=11)
     model.train()
     logits, (mu, sigma) = model(torch.randn((100, 3, 128, 128)))
     print(logits.shape, mu.shape, sigma.shape)

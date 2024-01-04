@@ -74,12 +74,12 @@ def main():
             hf[filename].attrs['identity'] = image2identity_dic[filename]
 
 if __name__ == '__main__':
-    # main()
-    with h5py.File('/home/tdye/VL/data/celeba/data_with_labels.h5', 'r') as hf:
-        for img_name in tqdm(hf):
-            # 读取图像数据
-            image_np = np.array(hf[img_name + '/image'])
-
+    main()
+    # with h5py.File('/home/tdye/VL/data/celeba/data_with_labels.h5', 'r') as hf:
+    #     for img_name in tqdm(hf):
+    #         读取图像数据
+            # image_np = np.array(hf[img_name + '/image'])
+            #
             # 读取属性标签和人脸类别标签
-            attributes = hf[img_name].attrs['attributes']
-            identity = hf[img_name].attrs['identity']
+            # attributes = hf[img_name].attrs['attributes']
+            # identity = hf[img_name].attrs['identity']

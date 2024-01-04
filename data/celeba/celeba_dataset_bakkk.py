@@ -142,7 +142,7 @@ def prepare_dataloaders(main_PID, target_PID, num_users=4, batch_size=16, auxili
 
 
 # if __name__ == '__main__':
-#     train_loaders, test_loader, auxiliary_train_loader = prepare_dataloaders(main_PID=35, target_PID=15)
+    # train_loaders, test_loader, auxiliary_train_loader = prepare_dataloaders(main_PID=35, target_PID=15)
     # res = construct_prop_nonprop_img_names()
     # get_auxiliary_dataloader(num_samples=10000)
     # get_celeba_combined_dataloader()

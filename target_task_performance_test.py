@@ -127,46 +127,6 @@ def test(model=None, data_loader=None):
     torch.cuda.empty_cache()
     return acc
 
-
-def heavy_finetune_test(model_path=None):
-    if model_path is None:
-        model = select_model(config=args)
-        num_features = model.decoder.in_features
-        model.decoder = nn.Linear(num_features, 2)
-    else:
-        model = torch.load(model_path)
-        num_features = model.decoder.in_features
-        model.decoder = nn.Linear(num_features, 2)
-    model.cuda()
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(params=model.parameters(),
-                          lr=lr,
-                          weight_decay=wd,
-                          momentum=momentum)
-    best_test_acc = 0.0
-    penalty = 0
-    for _ in tqdm(range(finetune_epochs)):
-        if penalty > tolerance:
-            break
-        model.train()
-        for step, (x, multi_labels) in enumerate(auxiliary_train_loader):
-            if torch.cuda.is_available():
-                x, multi_labels = x.cuda(), multi_labels.cuda()
-            logits, embeddings = model(x)
-            target_labels = multi_labels[:, 1]  # target task label
-            loss = loss_fn(logits, target_labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        test_acc = test(model=model, data_loader=test_loader)
-        if test_acc > best_test_acc:
-            best_test_acc = test_acc
-            penalty = 0
-        else:
-            penalty += 1
-        print(f"best test acc: {best_test_acc:.4f}")
-    return best_test_acc * 100
-
 def light_finetune_test(model_path=None):
     if model_path is None:
         model = select_model(config=args)
@@ -187,7 +147,10 @@ def light_finetune_test(model_path=None):
         for step, (x, multi_labels) in enumerate(auxiliary_train_loader):
             if torch.cuda.is_available():
                 x, multi_labels = x.cuda(), multi_labels.cuda()
-            z, (z_mu, z_sigma) = model.featurize(x)
+            if model.probabilistic:
+                z, (z_mu, z_sigma) = model.featurize(x)
+            else:
+                z_mu = model.featurize(x)
             logits = model.decoder(z_mu)
             target_labels = multi_labels[:, 1]  # target task label
             loss = loss_fn(logits, target_labels)
@@ -203,14 +166,9 @@ def transfer_test(model_path=None):
     results = []
     for seed in range(num_seeds):
         setup_seed(seed)
-        if light_finetune:
-            test_acc = light_finetune_test(model_path=model_path)
-            results.append(test_acc)
-            print('seed', seed, f'test acc: {test_acc}')
-        else:
-            best_test_acc = heavy_finetune_test(model_path=model_path)
-            print('seed', seed, f'best test acc: {best_test_acc}')
-            results.append(best_test_acc)
+        test_acc = light_finetune_test(model_path=model_path)
+        results.append(test_acc)
+        print('seed', seed, f'test acc: {test_acc}')
     return results
 
 if args.use_wandb:
@@ -232,35 +190,3 @@ if args.use_wandb:
         'mean': np.mean(res),
         'std': np.std(res, ddof=1),
     })
-# if args.path is None:
-#     print("ImageNet Pretrained Model.")
-#     res = transfer_test(model_path=None)
-#     print("results", res)
-#     print("mean", "{:.2f}".format(np.mean(res)), "std", "{:.2f}".format(np.std(res, ddof=1)))
-#     if args.use_wandb:
-#         wandb.log({
-#             'mean': np.mean(res),
-#             'std': np.std(res, ddof=1),
-#         })
-# else:
-#     path = os.path.join('./logs', args.path)
-#     if os.path.isdir(path):
-#         model_names = [item for item in os.listdir(path) if 'model' in item]
-#         rounds = sorted([int(item.split('-')[0]) for item in model_names], reverse=True)
-#         for r in rounds:
-#             model_path = os.path.join(path, f"{r}-model.pt")
-#             res = transfer_test(model_path=model_path)
-#             print("results", res)
-#             print("mean", "{:.2f}".format(np.mean(res)), "std", "{:.2f}".format(np.std(res, ddof=1)))
-#             if args.use_wandb:
-#                 wandb.log({
-#                     'mean': np.mean(res),
-#                     'std': np.std(res, ddof=1),
-#                 })
-#
-#     elif os.path.isfile(path):
-#         res = transfer_test(model_path=path)
-#         print(res)
-#         print("mean", "{:.2f}".format(np.mean(res)), "std", "{:.2f}".format(np.std(res, ddof=1)))
-
-

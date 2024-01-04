@@ -1,19 +1,10 @@
-import os
-from copy import deepcopy
-
-import numpy as np
-import torch
-
 from utils.utils import *
-from utils.constants import *
 from utils.setup_md import *
 from algorithm.vl.client import CLIENT
 from tqdm import tqdm
 import time
-import datetime
 import wandb
 import torch.nn as nn
-import torch.optim as optim
 
 
 class SERVER:
@@ -23,13 +14,21 @@ class SERVER:
         self.clients = self.setup_clients()
         self.selected_clients = []
         self.num_samples_models = []
+        self.num_samples_reference_mus = []
+        self.num_samples_reference_sigmas = []
+        self.num_samples_Cs = []
+
         # affect server initialization
         setup_seed(config.seed)
         self.model = select_model(config=self.config)
-        self.target_head = nn.Linear(self.model.decoder.in_features, 2)
         if torch.cuda.is_available():
             self.model.cuda()
-            self.target_head.cuda()
+        self.probabilistic = config.probabilistic
+        # self.reference_mu = nn.Parameter(torch.zeros(config.num_classes, config.z_dim).cuda())
+        # self.reference_sigma = nn.Parameter(torch.ones(config.num_classes, config.z_dim).cuda())
+        self.reference_mu = nn.Parameter(torch.zeros(config.z_dim).cuda())
+        self.reference_sigma = nn.Parameter(torch.ones(config.z_dim).cuda())
+        self.C = nn.Parameter(torch.ones([]).cuda())
 
     def setup_clients(self):
         train_loaders, test_loader = setup_datasets(config=self.config)
@@ -57,7 +56,6 @@ class SERVER:
         for c in self.clients:
             print(c.user_id, "Train", c.train_samples_num)
 
-        # save the randomly initialized model
         torch.save(self.model, os.path.join(exp_log_dir, f'0-model.pt'))
 
         for i in tqdm(range(self.config.num_rounds)):
@@ -65,24 +63,46 @@ class SERVER:
             self.selected_clients = self.select_clients(round_th=i)
 
             training_acc = 0
-            training_loss = 0
+            training_class_loss = 0
+            training_CMI_Reg = 0
             total_samples = 0
 
             for k in range(len(self.selected_clients)):
                 c = self.selected_clients[k]
-                c.init_local_model(deepcopy(self.model))
-                train_samples_num, c_model, c_train_acc, c_train_loss = c.train(r=i)
+                if self.probabilistic:
+                    c.init_local_model(deepcopy(self.model),
+                                       self.reference_mu.clone(),
+                                       self.reference_sigma.clone(),
+                                       self.C.clone())
+                else:
+                    c.init_local_model(deepcopy(self.model))
+                train_samples_num, \
+                c_model, c_reference_mu, c_reference_sigma, c_C, \
+                c_train_acc, \
+                c_train_class_loss, c_train_CMI_Reg = c.train(r=i)
                 self.num_samples_models.append((train_samples_num, c_model))
+                self.num_samples_reference_mus.append((train_samples_num, c_reference_mu))
+                self.num_samples_reference_sigmas.append((train_samples_num, c_reference_sigma))
+                self.num_samples_Cs.append((train_samples_num, c_C))
 
                 training_acc += c_train_acc * train_samples_num
-                training_loss += c_train_loss * train_samples_num
+                training_class_loss += c_train_class_loss * train_samples_num
+                training_CMI_Reg += c_train_CMI_Reg * train_samples_num
                 total_samples += train_samples_num
 
             training_acc /= total_samples
-            training_loss /= total_samples
+            training_class_loss /= total_samples
+            training_CMI_Reg /= total_samples
 
             averaged_model = fed_average(self.num_samples_models)
             self.model.load_state_dict(averaged_model.state_dict())
+
+            averaged_reference_mu = fedavg_mu_or_sigma(self.num_samples_reference_mus)
+            self.reference_mu.data = averaged_reference_mu.data
+            averaged_reference_sigma = fedavg_mu_or_sigma(self.num_samples_reference_sigmas)
+            self.reference_sigma.data = averaged_reference_sigma.data
+            averaged_C = fedavg_mu_or_sigma(self.num_samples_Cs)
+            self.C.data = averaged_C.data
             end_time = time.time()
 
             print(f"training costs {end_time - start_time}(s)")
@@ -91,10 +111,11 @@ class SERVER:
                 test_acc, test_loss = self.test(model=self.model, data_loader=self.test_loader)
                 summary = {
                     "round": i,
-                    "TrainAcc": training_acc,
-                    "TrainLoss": training_loss,
-                    "TestAcc": test_acc,
-                    "TestLoss": test_loss,
+                    "train_acc": training_acc,
+                    "train_class_loss": training_class_loss,
+                    "train_CMI_Reg": training_CMI_Reg,
+                    "test_acc": test_acc,
+                    "test_loss": test_loss,
                 }
                 torch.save(self.model, os.path.join(exp_log_dir, f'{i+1}-model.pt'))
                 if self.config.use_wandb:
@@ -103,7 +124,11 @@ class SERVER:
                     print(summary)
 
             self.num_samples_models = []
+            self.num_samples_reference_mus = []
+            self.num_samples_reference_sigmas = []
             del averaged_model
+            del averaged_reference_mu
+            del averaged_reference_sigma
             torch.cuda.empty_cache()
 
     @staticmethod
@@ -121,13 +146,13 @@ class SERVER:
             for step, (x, multi_labels) in enumerate(data_loader):
                 if torch.cuda.is_available():
                     x, multi_labels = x.cuda(), multi_labels.cuda()
-                    y = multi_labels[:, 0] # main task label
+                y = multi_labels[:, 0] # main task label
                 logits = model(x)
                 loss = loss_fn(logits, y)
                 total_loss += loss.item()
                 total_iters += 1
                 preds = torch.argmax(logits, dim=-1)
-                total_right += torch.sum(preds == y)
+                total_right += torch.sum(torch.eq(preds, y))
                 total_samples += len(y)
 
             acc = float(total_right) / total_samples
